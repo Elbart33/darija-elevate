@@ -175,6 +175,27 @@ if(!w)return null;
 return PARCOURS.find(p=>p.categories.includes(w.category))||null;
 }
 
+// ── ARBRE DE PROGRESSION (style Duolingo) ──
+// 10 unités de 5 mots, ordonnées par difficulté croissante. Chaque unité se débloque
+// après la réussite (≥80%) du palier de validation de l'unité précédente.
+const UNITS=[
+{id:1,title:'Bases du caractère',icon:'🌱',color:'#5E5CE6',wordIds:[7,12,19,20,31]},
+{id:2,title:'Qualités et défauts',icon:'🎭',color:'#FF9F0A',wordIds:[46,25,34,35,42]},
+{id:3,title:'Émotions et limites',icon:'💭',color:'#FF453A',wordIds:[45,1,8,11,13]},
+{id:4,title:'Valeurs humaines',icon:'🤝',color:'#BF5AF2',wordIds:[16,17,21,33,38]},
+{id:5,title:'Zones grises',icon:'🌓',color:'#30D158',wordIds:[47,48,49,50,4]},
+{id:6,title:'Société en tension',icon:'🏛️',color:'#0A84FF',wordIds:[23,26,27,41,2]},
+{id:7,title:'Nuances avancées',icon:'🌫️',color:'#64D2FF',wordIds:[3,5,6,18,22]},
+{id:8,title:'Penser le monde moderne',icon:'🧭',color:'#FFD60A',wordIds:[24,29,36,37,43]},
+{id:9,title:'Discours et pouvoir',icon:'🎙️',color:'#34C759',wordIds:[9,10,14,28,30]},
+{id:10,title:'Maîtrise totale',icon:'👑',color:'#5AC8FA',wordIds:[32,39,40,44,15]}
+];
+function getUnitWords(u){return VOCABULARY.filter(w=>u.wordIds.includes(w.id))}
+function loadUnitProgress(){try{return JSON.parse(localStorage.getItem('darija_units')||'{}')}catch(e){return{}}}
+function saveUnitProgress(p){try{localStorage.setItem('darija_units',JSON.stringify(p))}catch(e){}}
+function isUnitUnlocked(unitId,progress){if(unitId===1)return true;return!!(progress[unitId-1]&&progress[unitId-1].completed)}
+function isUnitCompleted(unitId,progress){return!!(progress[unitId]&&progress[unitId].completed)}
+
 const LEVELS=[{id:"courant",label:"Courant",color:"#30D158"},{id:"riche",label:"Riche",color:"#0A84FF"},{id:"avancé",label:"Avancé",color:"#BF5AF2"},{id:"cultivé",label:"Très cultivé",color:"#FF9F0A"},{id:"élite",label:"Élite",color:"#FF453A"}];
 
 // ── STORAGE ──
@@ -403,9 +424,9 @@ function HomeTab({onOpen,srsData,stats,lastImmersionId,onGoToImmersion,onGoToQui
 }
 
 // ── LIBRARY ──
-function LibraryTab({onOpen,srsData,onGoToImmersion,onGoToQuizParcours}){
-  const[view,setView]=useState('parcours'); // 'parcours' | 'detail' | 'all'
-  const[activeParcours,setActiveParcours]=useState(null);
+function LibraryTab({onOpen,srsData,onGoToImmersion,onGoToQuizUnit,unitProgress}){
+  const[view,setView]=useState('tree'); // 'tree' | 'unit' | 'all'
+  const[activeUnit,setActiveUnit]=useState(null);
   const[search,setSearch]=useState('');
   const[cat,setCat]=useState('all');
   const srsColor=v=>v==='known'?'#30D158':v==='medium'?'#FF9F0A':v==='unknown'?'#FF453A':'var(--bg5)';
@@ -438,7 +459,7 @@ function LibraryTab({onOpen,srsData,onGoToImmersion,onGoToQuizParcours}){
       React.createElement('div',{style:{padding:'20px 16px 12px'}},
         React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}},
           React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Tous les mots'),
-          React.createElement('button',{onClick:()=>setView('parcours'),style:{background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:10,padding:'8px 12px',color:'#fff',fontSize:12,cursor:'pointer'}},'🎯 Parcours')
+          React.createElement('button',{onClick:()=>setView('tree'),style:{background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:10,padding:'8px 12px',color:'#fff',fontSize:12,cursor:'pointer'}},'🧗 Parcours')
         ),
         React.createElement('input',{className:'search-bar',placeholder:'Rechercher...',value:search,onChange:e=>setSearch(e.target.value)})
       ),
@@ -454,72 +475,58 @@ function LibraryTab({onOpen,srsData,onGoToImmersion,onGoToQuizParcours}){
     );
   }
 
-  // ── VUE DÉTAIL D'UN PARCOURS ──
-  if(view==='detail'&&activeParcours){
-    const p=activeParcours;
-    const words=getParcoursWords(p);
-    const mastery=getParcoursMastery(p,srsData);
-    const text=IMMERSION_TEXTS.find(t=>p.textIds.includes(t.id));
+  // ── VUE DÉTAIL D'UNE UNITÉ ──
+  if(view==='unit'&&activeUnit){
+    const u=activeUnit;
+    const words=getUnitWords(u);
+    const completed=isUnitCompleted(u.id,unitProgress);
+    const best=(unitProgress[u.id]&&unitProgress[u.id].bestScore)||0;
+    const text=IMMERSION_TEXTS.find(t=>words.some(w=>t.words.includes(w.arabic)));
     return React.createElement('div',null,
       React.createElement('div',{className:'word-detail-header',style:{padding:'20px 16px 0'}},
-        React.createElement('button',{className:'back-btn',onClick:()=>{setView('parcours');setActiveParcours(null)}},'←'),
-        React.createElement('span',{style:{fontSize:14,color:'var(--text3)',fontWeight:500}},'Parcours')
+        React.createElement('button',{className:'back-btn',onClick:()=>{setView('tree');setActiveUnit(null)}},'←'),
+        React.createElement('span',{style:{fontSize:14,color:'var(--text3)',fontWeight:500}},'Unité '+u.id+' / '+UNITS.length)
       ),
       React.createElement('div',{style:{padding:'16px 16px 8px'}},
-        React.createElement('div',{style:{fontSize:34,marginBottom:6}},p.icon),
-        React.createElement('div',{style:{fontSize:24,fontWeight:700,letterSpacing:-.5}},p.title),
-        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},p.subtitle)
-      ),
-      React.createElement('div',{style:{padding:'0 16px 16px'}},
-        React.createElement('div',{style:{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:16,padding:16}},
-          React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}},
-            React.createElement('span',{style:{fontSize:12,color:'var(--text3)'}},'Maîtrise du module'),
-            React.createElement('span',{style:{fontSize:13,fontWeight:700,color:p.color}},mastery+'%')
-          ),
-          React.createElement('div',{style:{height:8,background:'var(--bg5)',borderRadius:4,overflow:'hidden'}},
-            React.createElement('div',{style:{height:'100%',width:mastery+'%',background:p.color,borderRadius:4}})
-          )
-        )
+        React.createElement('div',{style:{fontSize:34,marginBottom:6}},u.icon),
+        React.createElement('div',{style:{fontSize:24,fontWeight:700,letterSpacing:-.5}},u.title),
+        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},words.length+' mots'+(completed?' · palier validé ✓ ('+best+'%)':' · palier non validé'))
       ),
       React.createElement('div',{style:{padding:'0 16px 16px',display:'flex',gap:10}},
-        text&&React.createElement('button',{onClick:()=>onGoToImmersion(text.id),style:{flex:1,background:p.color+'22',border:'1px solid '+p.color+'55',borderRadius:12,padding:'12px 8px',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}},'📖 Lire en contexte'),
-        React.createElement('button',{onClick:()=>onGoToQuizParcours(p.id),style:{flex:1,background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 8px',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}},'⚡ S\'évaluer')
+        text&&React.createElement('button',{onClick:()=>onGoToImmersion(text.id),style:{flex:1,background:u.color+'22',border:'1px solid '+u.color+'55',borderRadius:12,padding:'12px 8px',color:'#fff',fontSize:12,fontWeight:600,cursor:'pointer'}},'📖 Lire en contexte'),
+        React.createElement('button',{onClick:()=>onGoToQuizUnit(u.id),style:{flex:1,background:u.color,border:'none',borderRadius:12,padding:'12px 8px',color:'#fff',fontSize:12,fontWeight:700,cursor:'pointer'}},completed?'🔁 Repasser le palier':'🚀 Démarrer le palier')
       ),
       React.createElement('div',{className:'section'},
-        React.createElement('div',{className:'section-title'},words.length+' mots du module'),
+        React.createElement('div',{className:'section-title'},'Mots de l\'unité'),
         React.createElement('div',{className:'card'},words.map(renderWordRow))
       )
     );
   }
 
-  // ── VUE PRINCIPALE : GRILLE DES PARCOURS ──
+  // ── VUE PRINCIPALE : ARBRE DE PROGRESSION ──
   return React.createElement('div',null,
     React.createElement('div',{style:{padding:'20px 16px 4px'}},
-      React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5,marginBottom:4}},'Vocabulaire'),
-      React.createElement('div',{style:{fontSize:13,color:'var(--text3)'}},'Choisis un parcours pour apprendre par thème')
+      React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5,marginBottom:4}},'Parcours'),
+      React.createElement('div',{style:{fontSize:13,color:'var(--text3)'}},'Progresse unité par unité, du plus simple au plus rare')
     ),
-    React.createElement('div',{style:{padding:'12px 16px 16px',display:'flex',flexDirection:'column',gap:12}},
-      PARCOURS.map(p=>{
-        const words=getParcoursWords(p);
-        const mastery=getParcoursMastery(p,srsData);
-        return React.createElement('div',{key:p.id,onClick:()=>{setActiveParcours(p);setView('detail')},style:{background:'var(--bg3)',border:'1px solid var(--border)',borderRadius:18,padding:18,cursor:'pointer'}},
-          React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
-            React.createElement('div',{style:{display:'flex',gap:12,alignItems:'flex-start'}},
-              React.createElement('div',{style:{fontSize:28}},p.icon),
-              React.createElement('div',null,
-                React.createElement('div',{style:{fontSize:16,fontWeight:700}},p.title),
-                React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginTop:2}},p.subtitle),
-                React.createElement('div',{style:{fontSize:11,color:'var(--text3)',marginTop:6}},words.length+' mots'+(p.textIds.length?' · texte associé':''))
-              )
+    React.createElement('div',{style:{padding:'16px 16px 8px',display:'flex',flexDirection:'column',alignItems:'center'}},
+      UNITS.map((u,i)=>{
+        const unlocked=isUnitUnlocked(u.id,unitProgress);
+        const completed=isUnitCompleted(u.id,unitProgress);
+        const offset=i%2===0?-36:36;
+        return React.createElement('div',{key:u.id,style:{display:'flex',flexDirection:'column',alignItems:'center'}},
+          i>0&&React.createElement('div',{style:{width:3,height:22,background:unlocked?'var(--border)':'var(--bg5)',opacity:.6}}),
+          React.createElement('div',{onClick:()=>{if(unlocked){setActiveUnit(u);setView('unit')}},style:{transform:'translateX('+offset+'px)',display:'flex',flexDirection:'column',alignItems:'center',cursor:unlocked?'pointer':'default'}},
+            React.createElement('div',{style:{width:64,height:64,borderRadius:'50%',background:completed?u.color:(unlocked?u.color+'33':'var(--bg4)'),border:'2px solid '+(unlocked?u.color:'var(--border)'),display:'flex',alignItems:'center',justifyContent:'center',fontSize:26,position:'relative',boxShadow:completed?'0 0 0 4px '+u.color+'22':'none'}},
+              unlocked?u.icon:'🔒',
+              completed&&React.createElement('div',{style:{position:'absolute',bottom:-4,right:-4,background:'var(--green)',borderRadius:'50%',width:20,height:20,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,border:'2px solid var(--bg1)'}},'✓')
             ),
-            React.createElement('div',{style:{position:'relative',width:44,height:44,borderRadius:'50%',background:'conic-gradient('+p.color+' '+(mastery*3.6)+'deg,var(--bg5) 0deg)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},
-              React.createElement('div',{style:{width:34,height:34,borderRadius:'50%',background:'var(--bg3)',fontSize:10,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700}},mastery+'%')
-            )
+            React.createElement('div',{style:{fontSize:11,fontWeight:600,marginTop:6,color:unlocked?'#fff':'var(--text3)',maxWidth:90,textAlign:'center'}},u.title)
           )
         );
       })
     ),
-    React.createElement('div',{style:{padding:'0 16px 20px'}},
+    React.createElement('div',{style:{padding:'12px 16px 20px'}},
       React.createElement('button',{onClick:()=>setView('all'),style:{width:'100%',background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:14,padding:'14px',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}},'📚 Voir tous les mots ('+VOCABULARY.length+')')
     )
   );
@@ -587,43 +594,85 @@ function ImmersionTab({onOpen,activeId,onSetActiveId,onRead}){
 }
 
 // ── QUIZ ──
-function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,onModeConsumed}){
+function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,initialUnitId,onModeConsumed,onUnitComplete,onExitToLibrary}){
   const[mode,setMode]=useState(initialMode||'menu');
   const[textId,setTextId]=useState(initialTextId||IMMERSION_TEXTS[0].id);
   const[parcoursId,setParcoursId]=useState(initialParcoursId||PARCOURS[0].id);
-  useEffect(()=>{if(initialMode){setMode(initialMode);if(initialTextId)setTextId(initialTextId);if(initialParcoursId)setParcoursId(initialParcoursId);onModeConsumed&&onModeConsumed();}},[initialMode]);
+  const[unitId,setUnitId]=useState(initialUnitId||UNITS[0].id);
+  useEffect(()=>{if(initialMode){setMode(initialMode);if(initialTextId)setTextId(initialTextId);if(initialParcoursId)setParcoursId(initialParcoursId);if(initialUnitId)setUnitId(initialUnitId);onModeConsumed&&onModeConsumed();}},[initialMode]);
 
   const pool=useMemo(()=>{
     if(mode==='text'){const t=IMMERSION_TEXTS.find(x=>x.id===textId);return getTextVocab(t)}
     if(mode==='parcours'){const p=PARCOURS.find(x=>x.id===parcoursId);return p?getParcoursWords(p):VOCABULARY}
+    if(mode==='unit'){const u=UNITS.find(x=>x.id===unitId);return u?getUnitWords(u):VOCABULARY}
     if(mode==='due'){const due=VOCABULARY.filter(w=>isDue(srsData[w.id]));return due.length>=4?due:VOCABULARY}
     return VOCABULARY;
-  },[mode,textId,parcoursId]);
+  },[mode,textId,parcoursId,unitId]);
 
-  const[idx,setIdx]=useState(0);
-  const[selected,setSelected]=useState(null);
-  const pickWord=lastId=>{
-    const candidates=pool.filter(w=>w.id!==lastId);
-    return(candidates.length?candidates:pool)[Math.floor(Math.random()*(candidates.length||pool.length))];
-  };
-  const makeQ=lastId=>{
-    const word=pickWord(lastId);
+  const makeQFor=word=>{
     const sameCat=VOCABULARY.filter(w=>w.id!==word.id&&w.category===word.category);
     const wrongPool=sameCat.length>=3?sameCat:VOCABULARY.filter(w=>w.id!==word.id);
     const wrong=wrongPool.sort(()=>Math.random()-.5).slice(0,3).map(w=>w.definition);
     const opts=[word.definition,...wrong].sort(()=>Math.random()-.5);
     return{word,options:opts,correct:word.definition};
   };
+
+  // ── MODE PALIER (session fixe avec score) ──
+  const[session,setSession]=useState([]);
+  const[sessionIdx,setSessionIdx]=useState(0);
+  const[correctCount,setCorrectCount]=useState(0);
+  const[finished,setFinished]=useState(false);
+  const completedRef=useRef(false);
+  useEffect(()=>{
+    if(mode==='unit'){
+      const u=UNITS.find(x=>x.id===unitId);
+      const words=u?getUnitWords(u):[];
+      setSession([...words].sort(()=>Math.random()-.5));
+      setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;
+    }
+  },[mode,unitId]);
+  const sessionQ=mode==='unit'&&session.length?makeQFor(session[sessionIdx]):null;
+
+  // ── MODES LIBRES (infinis) ──
+  const[idx,setIdx]=useState(0);
+  const[selected,setSelected]=useState(null);
+  const pickWord=lastId=>{
+    const candidates=pool.filter(w=>w.id!==lastId);
+    return(candidates.length?candidates:pool)[Math.floor(Math.random()*(candidates.length||pool.length))];
+  };
   const[q,setQ]=useState(null);
-  useEffect(()=>{if(mode!=='menu'){setQ(makeQ(null));setIdx(0);setSelected(null)}},[mode,textId,parcoursId]);
+  useEffect(()=>{if(mode!=='menu'&&mode!=='unit'){setQ(makeQFor(pickWord(null)));setIdx(0);setSelected(null)}},[mode,textId,parcoursId]);
 
   const handle=opt=>{
+    if(mode==='unit'){
+      if(selected||!sessionQ)return;
+      setSelected(opt);
+      const isCorrect=opt===sessionQ.correct;
+      const quality=isCorrect?2:0;
+      const n=reviewCard(srsData,sessionQ.word.id,quality);saveSRS(n);onSRS(n);
+      if(isCorrect)setCorrectCount(c=>c+1);
+      setTimeout(()=>{
+        setSelected(null);
+        if(sessionIdx+1<session.length){setSessionIdx(i=>i+1)}
+        else{setFinished(true)}
+      },1200);
+      return;
+    }
     if(selected||!q)return;
     setSelected(opt);
     const quality=opt===q.correct?2:0;
     const n=reviewCard(srsData,q.word.id,quality);saveSRS(n);onSRS(n);
-    setTimeout(()=>{setIdx(p=>p+1);setQ(makeQ(q.word.id));setSelected(null);},1200);
+    setTimeout(()=>{setIdx(p=>p+1);setQ(makeQFor(pickWord(q.word.id)));setSelected(null);},1200);
   };
+
+  useEffect(()=>{
+    if(mode==='unit'&&finished&&!completedRef.current){
+      completedRef.current=true;
+      const score=session.length?Math.round((correctCount/session.length)*100):0;
+      const passed=score>=80;
+      onUnitComplete&&onUnitComplete(unitId,passed,score);
+    }
+  },[finished]);
 
   if(mode==='menu')return React.createElement('div',null,
     React.createElement('div',{style:{padding:'20px 16px 8px'}},
@@ -654,6 +703,49 @@ function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,onMo
       ))
     )
   );
+
+  // ── ÉCRAN DE RÉSULTATS DU PALIER ──
+  if(mode==='unit'&&finished){
+    const u=UNITS.find(x=>x.id===unitId);
+    const score=session.length?Math.round((correctCount/session.length)*100):0;
+    const passed=score>=80;
+    return React.createElement('div',{style:{padding:'40px 24px',textAlign:'center'}},
+      React.createElement('div',{style:{fontSize:54,marginBottom:12}},passed?'🎉':'💪'),
+      React.createElement('div',{style:{fontSize:22,fontWeight:700,marginBottom:6}},passed?'Palier validé !':'Pas encore'),
+      React.createElement('div',{style:{fontSize:14,color:'var(--text3)',marginBottom:24}},correctCount+' / '+session.length+' bonnes réponses ('+score+'%)'),
+      !passed&&React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.5}},'Il te faut au moins 80% pour débloquer l\'unité suivante. Retente !'),
+      React.createElement('button',{onClick:()=>{setMode('unit');setSession([...getUnitWords(u)].sort(()=>Math.random()-.5));setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;},style:{width:'100%',background:u.color,border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',marginBottom:10}},'🔁 Recommencer le palier'),
+      React.createElement('button',{onClick:()=>onExitToLibrary&&onExitToLibrary(),style:{width:'100%',background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'← Retour au parcours')
+    );
+  }
+
+  if(mode==='unit'){
+    if(!sessionQ)return null;
+    return React.createElement('div',null,
+      React.createElement('div',{style:{padding:'20px 16px 8px'}},
+        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Palier'),
+        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(sessionIdx+1)+' / '+session.length)
+      ),
+      React.createElement('div',{style:{display:'flex',gap:6,padding:'0 16px 16px'}},
+        session.map((w,i)=>React.createElement('div',{key:i,style:{flex:1,height:5,borderRadius:3,background:i<sessionIdx?'var(--green)':i===sessionIdx?'var(--accent)':'var(--bg5)'}}))
+      ),
+      React.createElement('div',{className:'section',style:{marginTop:0}},
+        React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
+          React.createElement('div',{className:'word-hero-content'},
+            React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},'QUEL EST LE SENS ?'),
+            React.createElement('div',{className:'arabic-text'},sessionQ.word.arabic),
+            React.createElement('div',{className:'transliteration'},sessionQ.word.transliteration),
+            React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:sessionQ.word.level}))
+          )
+        ),
+        ...sessionQ.options.map((opt,i)=>{
+          let cls='quiz-option';
+          if(selected){if(opt===sessionQ.correct)cls+=' correct';else if(opt===selected)cls+=' wrong';}
+          return React.createElement('div',{key:i,className:cls,onClick:()=>handle(opt)},opt);
+        })
+      )
+    );
+  }
 
   if(!q)return null;
 
@@ -817,6 +909,7 @@ function App(){
   });
   const[immersionId,setImmersionIdState]=useState(()=>{try{return JSON.parse(localStorage.getItem('darija_last_immersion'))||IMMERSION_TEXTS[0].id}catch(e){return IMMERSION_TEXTS[0].id}});
   const[readTexts,setReadTexts]=useState(()=>{try{return JSON.parse(localStorage.getItem('darija_read_texts'))||[]}catch(e){return[]}});
+  const[unitProgress,setUnitProgress]=useState(loadUnitProgress);
   const[quizInit,setQuizInit]=useState(null);
 
   const scrollRef=useRef(null);
@@ -834,15 +927,24 @@ function App(){
   const goToImmersion=id=>{setImmersionId(id);setWord(null);setTab('immersion');scrollRef.current?.scrollTo(0,0)};
   const goToQuizDue=()=>{setQuizInit({mode:'due'});setWord(null);setTab('quiz');scrollRef.current?.scrollTo(0,0)};
   const goToQuizParcours=pid=>{setQuizInit({mode:'parcours',parcoursId:pid});setWord(null);setTab('quiz');scrollRef.current?.scrollTo(0,0)};
+  const goToQuizUnit=uid=>{setQuizInit({mode:'unit',unitId:uid});setWord(null);setTab('quiz');scrollRef.current?.scrollTo(0,0)};
   const goToProgress=()=>go('progress');
   const consumeQuizInit=()=>setQuizInit(null);
+  const onUnitComplete=(unitId,passed,score)=>{
+    setUnitProgress(prev=>{
+      const prevBest=(prev[unitId]&&prev[unitId].bestScore)||0;
+      const n={...prev,[unitId]:{completed:passed||(prev[unitId]&&prev[unitId].completed)||false,bestScore:Math.max(score,prevBest)}};
+      saveUnitProgress(n);
+      return n;
+    });
+  };
 
   let content;
   if(word)content=React.createElement(WordDetail,{word,onBack:back,onSRS:updateSRS,srsData,onGoToImmersion:goToImmersion});
   else if(tab==='home')content=React.createElement(HomeTab,{onOpen:open,srsData,stats,lastImmersionId:immersionId,onGoToImmersion:goToImmersion,onGoToQuizDue:goToQuizDue,onGoToProgress:goToProgress});
-  else if(tab==='library')content=React.createElement(LibraryTab,{onOpen:open,srsData,onGoToImmersion:goToImmersion,onGoToQuizParcours:goToQuizParcours});
+  else if(tab==='library')content=React.createElement(LibraryTab,{onOpen:open,srsData,onGoToImmersion:goToImmersion,onGoToQuizUnit:goToQuizUnit,unitProgress});
   else if(tab==='immersion')content=React.createElement(ImmersionTab,{onOpen:open,activeId:immersionId,onSetActiveId:setImmersionId,onRead:markTextRead});
-  else if(tab==='quiz')content=React.createElement(QuizTab,{srsData,onSRS:updateSRS,initialMode:quizInit&&quizInit.mode,initialTextId:quizInit&&quizInit.textId,initialParcoursId:quizInit&&quizInit.parcoursId,onModeConsumed:consumeQuizInit});
+  else if(tab==='quiz')content=React.createElement(QuizTab,{srsData,onSRS:updateSRS,initialMode:quizInit&&quizInit.mode,initialTextId:quizInit&&quizInit.textId,initialParcoursId:quizInit&&quizInit.parcoursId,initialUnitId:quizInit&&quizInit.unitId,onModeConsumed:consumeQuizInit,onUnitComplete,onExitToLibrary:()=>go('library')});
   else content=React.createElement(ProgressTab,{srsData,stats,onImport,readTexts});
 
   return React.createElement('div',{className:'app'},
