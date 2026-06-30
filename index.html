@@ -617,21 +617,46 @@ function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,init
     return{word,options:opts,correct:word.definition};
   };
 
-  // ── MODE PALIER (session fixe avec score) ──
+  // ── MODE PALIER : leçon complète (Découverte → Entraînement mixte → Résultats) ──
+  const[phase,setPhase]=useState('intro'); // 'intro' | 'practice' | 'results'
+  const[introIdx,setIntroIdx]=useState(0);
   const[session,setSession]=useState([]);
   const[sessionIdx,setSessionIdx]=useState(0);
   const[correctCount,setCorrectCount]=useState(0);
   const[finished,setFinished]=useState(false);
   const completedRef=useRef(false);
+  const unitWords=useMemo(()=>{const u=UNITS.find(x=>x.id===unitId);return u?getUnitWords(u):[]},[unitId]);
+
+  const buildLesson=words=>{
+    let exos=words.map(w=>({type:'mcq_def',word:w}));
+    const second=[...words].sort(()=>Math.random()-.5).map(w=>({type:Math.random()<0.5?'mcq_word':'listen',word:w}));
+    exos=exos.concat(second);
+    return exos.sort(()=>Math.random()-.5);
+  };
+  const buildExerciseQ=ex=>{
+    const w=ex.word;
+    const others=unitWords.filter(x=>x.id!==w.id);
+    const pickWrong=key=>others.sort(()=>Math.random()-.5).slice(0,3).map(x=>x[key]);
+    if(ex.type==='mcq_def'){
+      const opts=[w.definition,...pickWrong('definition')].sort(()=>Math.random()-.5);
+      return{kind:'mcq_def',word:w,options:opts,correct:w.definition};
+    }
+    const opts=[w.arabic,...pickWrong('arabic')].sort(()=>Math.random()-.5);
+    return{kind:ex.type,word:w,options:opts,correct:w.arabic};
+  };
+
   useEffect(()=>{
     if(mode==='unit'){
-      const u=UNITS.find(x=>x.id===unitId);
-      const words=u?getUnitWords(u):[];
-      setSession([...words].sort(()=>Math.random()-.5));
-      setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;
+      setPhase(unitWords.length?'intro':'practice');
+      setIntroIdx(0);setSession([]);setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;
     }
   },[mode,unitId]);
-  const sessionQ=mode==='unit'&&session.length?makeQFor(session[sessionIdx]):null;
+
+  const startPractice=()=>{setSession(buildLesson(unitWords));setSessionIdx(0);setPhase('practice')};
+  const sessionQ=mode==='unit'&&phase==='practice'&&session.length?buildExerciseQ(session[sessionIdx]):null;
+  useEffect(()=>{
+    if(mode==='unit'&&phase==='practice'&&sessionQ&&sessionQ.kind==='listen')speakArabic(sessionQ.word.arabic);
+  },[mode,phase,sessionIdx]);
 
   // ── MODES LIBRES (infinis) ──
   const[idx,setIdx]=useState(0);
@@ -704,6 +729,37 @@ function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,init
     )
   );
 
+  // ── PHASE DÉCOUVERTE : flashcards une par une ──
+  if(mode==='unit'&&phase==='intro'){
+    const w=unitWords[introIdx];
+    if(!w)return null;
+    const isLast=introIdx===unitWords.length-1;
+    return React.createElement('div',null,
+      React.createElement('div',{style:{padding:'20px 16px 8px'}},
+        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Découverte'),
+        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Mot '+(introIdx+1)+' / '+unitWords.length)
+      ),
+      React.createElement('div',{style:{display:'flex',gap:6,padding:'0 16px 16px'}},
+        unitWords.map((x,i)=>React.createElement('div',{key:i,style:{flex:1,height:5,borderRadius:3,background:i<introIdx?'var(--green)':i===introIdx?'var(--accent)':'var(--bg5)'}}))
+      ),
+      React.createElement('div',{className:'section',style:{marginTop:0}},
+        React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
+          React.createElement('div',{className:'word-hero-content'},
+            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
+              React.createElement('div',{className:'word-badge'},React.createElement('span',{className:'dot-live'}),w.register),
+              React.createElement('button',{onClick:()=>speakArabic(w.arabic),style:{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',borderRadius:'50%',width:38,height:38,fontSize:16,color:'#fff',cursor:'pointer',flexShrink:0}},'🔊')
+            ),
+            React.createElement('div',{className:'arabic-text'},w.arabic),
+            React.createElement('div',{className:'transliteration'},w.transliteration),
+            React.createElement('div',{className:'definition-text'},w.definition),
+            React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:w.level}))
+          )
+        ),
+        React.createElement('button',{onClick:()=>isLast?startPractice():setIntroIdx(i=>i+1),style:{width:'100%',background:'var(--accent)',border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer'}},isLast?'🚀 Commencer l\'entraînement':'Suivant →')
+      )
+    );
+  }
+
   // ── ÉCRAN DE RÉSULTATS DU PALIER ──
   if(mode==='unit'&&finished){
     const u=UNITS.find(x=>x.id===unitId);
@@ -714,17 +770,19 @@ function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,init
       React.createElement('div',{style:{fontSize:22,fontWeight:700,marginBottom:6}},passed?'Palier validé !':'Pas encore'),
       React.createElement('div',{style:{fontSize:14,color:'var(--text3)',marginBottom:24}},correctCount+' / '+session.length+' bonnes réponses ('+score+'%)'),
       !passed&&React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.5}},'Il te faut au moins 80% pour débloquer l\'unité suivante. Retente !'),
-      React.createElement('button',{onClick:()=>{setMode('unit');setSession([...getUnitWords(u)].sort(()=>Math.random()-.5));setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;},style:{width:'100%',background:u.color,border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',marginBottom:10}},'🔁 Recommencer le palier'),
+      React.createElement('button',{onClick:()=>{setFinished(false);completedRef.current=false;startPractice();},style:{width:'100%',background:u.color,border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',marginBottom:10}},'🔁 Refaire l\'entraînement'),
       React.createElement('button',{onClick:()=>onExitToLibrary&&onExitToLibrary(),style:{width:'100%',background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'← Retour au parcours')
     );
   }
 
+  // ── PHASE ENTRAÎNEMENT : exercices mixtes interleavés ──
   if(mode==='unit'){
     if(!sessionQ)return null;
+    const kindLabel={mcq_def:'QUEL EST LE SENS ?',mcq_word:'QUEL MOT CORRESPOND À CETTE DÉFINITION ?',listen:'ÉCOUTE ET CHOISIS LE BON MOT'}[sessionQ.kind];
     return React.createElement('div',null,
       React.createElement('div',{style:{padding:'20px 16px 8px'}},
-        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Palier'),
-        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(sessionIdx+1)+' / '+session.length)
+        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Entraînement'),
+        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Exercice '+(sessionIdx+1)+' / '+session.length)
       ),
       React.createElement('div',{style:{display:'flex',gap:6,padding:'0 16px 16px'}},
         session.map((w,i)=>React.createElement('div',{key:i,style:{flex:1,height:5,borderRadius:3,background:i<sessionIdx?'var(--green)':i===sessionIdx?'var(--accent)':'var(--bg5)'}}))
@@ -732,16 +790,20 @@ function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,init
       React.createElement('div',{className:'section',style:{marginTop:0}},
         React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
           React.createElement('div',{className:'word-hero-content'},
-            React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},'QUEL EST LE SENS ?'),
-            React.createElement('div',{className:'arabic-text'},sessionQ.word.arabic),
-            React.createElement('div',{className:'transliteration'},sessionQ.word.transliteration),
+            React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},kindLabel),
+            sessionQ.kind==='mcq_def'&&React.createElement(React.Fragment,null,
+              React.createElement('div',{className:'arabic-text'},sessionQ.word.arabic),
+              React.createElement('div',{className:'transliteration'},sessionQ.word.transliteration)
+            ),
+            sessionQ.kind==='mcq_word'&&React.createElement('div',{style:{fontSize:17,color:'#fff',lineHeight:1.5,marginTop:4}},sessionQ.word.definition),
+            sessionQ.kind==='listen'&&React.createElement('button',{onClick:()=>speakArabic(sessionQ.word.arabic),style:{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:16,padding:'18px 28px',fontSize:30,color:'#fff',cursor:'pointer',marginTop:6}},'🔊'),
             React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:sessionQ.word.level}))
           )
         ),
         ...sessionQ.options.map((opt,i)=>{
           let cls='quiz-option';
           if(selected){if(opt===sessionQ.correct)cls+=' correct';else if(opt===selected)cls+=' wrong';}
-          return React.createElement('div',{key:i,className:cls,onClick:()=>handle(opt)},opt);
+          return React.createElement('div',{key:i,className:cls,style:sessionQ.kind!=='mcq_def'?{direction:'rtl',textAlign:'right',fontSize:17}:null,onClick:()=>handle(opt)},opt);
         })
       )
     );
