@@ -595,13 +595,41 @@ function ImmersionTab({onOpen,activeId,onSetActiveId,onRead}){
 
 // ── QUIZ ──
 // ── QUIZ (version corrigée) ──
-function QuizTab({srsData,onSRS}){
-const pool=VOCABULARY;
+function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,initialUnitId,onModeConsumed,onUnitComplete,onExitToLibrary}){
+
+// Résout, une seule fois à l'ouverture de l'onglet, quelle sélection de mots utiliser
+// selon la provenance (parcours pédagogique, unité, révision du jour, ou tous les mots)
+const resolve=()=>{
+if(initialMode==='due'){
+const words=VOCABULARY.filter(w=>isDue(srsData[w.id]));
+return{mode:'due',rawPool:words,label:'Révision du jour',unit:null};
+}
+if(initialMode==='parcours'){
+const p=PARCOURS.find(x=>x.id===initialParcoursId);
+return{mode:'parcours',rawPool:p?getParcoursWords(p):[],label:p?p.title:'Parcours',unit:null};
+}
+if(initialMode==='unit'){
+const u=UNITS.find(x=>x.id===initialUnitId);
+return{mode:'unit',rawPool:u?getUnitWords(u):[],label:u?u.title:'Unité',unit:u||null};
+}
+if(initialMode==='text'&&initialTextId){
+const t=IMMERSION_TEXTS.find(x=>x.id===initialTextId);
+return{mode:'text',rawPool:t?getTextVocab(t):[],label:t?t.title:'Quiz',unit:null};
+}
+return{mode:'all',rawPool:VOCABULARY,label:'Tous les mots',unit:null};
+};
+
+const[ctx]=useState(resolve); // figé une seule fois à l'entrée dans l'onglet
+const isEmpty=ctx.rawPool.length===0;
+const pool=isEmpty?VOCABULARY:ctx.rawPool; // filet de sécurité interne pour ne jamais casser les hooks
+const total=pool.length;
+
+useEffect(()=>{if(onModeConsumed)onModeConsumed()},[]); // consomme l'intention de navigation une seule fois
 
 // makeQ construit la question ET fige les options (avec un id stable) une seule fois
 const makeQ=i=>{
 const word=pool[i%pool.length];
-const wrong=pool.filter(w=>w.id!==word.id).sort(()=>Math.random()-.5).slice(0,3);
+const wrong=VOCABULARY.filter(w=>w.id!==word.id).sort(()=>Math.random()-.5).slice(0,3);
 const opts=[word,...wrong]
 .sort(()=>Math.random()-.5)
 .map(w=>({id:w.id,text:w.definition,isCorrect:w.id===word.id}));
@@ -611,29 +639,85 @@ return{word,options:opts};
 const[idx,setIdx]=useState(0);
 const[q,setQ]=useState(()=>makeQ(0));
 const[selectedId,setSelectedId]=useState(null);
+const[finished,setFinished]=useState(false);
+const correctRef=useRef(0);
+
+const restart=()=>{
+correctRef.current=0;
+setIdx(0);
+setQ(makeQ(0));
+setSelectedId(null);
+setFinished(false);
+};
 
 const handle=opt=>{
-if(selectedId!==null)return; // empêche tout second clic pendant l'affichage du résultat
+if(selectedId!==null||finished)return; // empêche tout second clic pendant l'affichage du résultat
 setSelectedId(opt.id);
-const c=opt.isCorrect?'known':'unknown';
-const n={...srsData,[q.word.id]:c};
+if(opt.isCorrect)correctRef.current+=1;
+const quality=opt.isCorrect?2:0; // 2 = je connais, 0 = inconnu (moteur SRS SM-2 simplifié)
+const n=reviewCard(srsData,q.word.id,quality);
 saveSRS(n);
 onSRS(n);
 
 setTimeout(()=>{
-setIdx(prev=>{
-const nextIdx=prev+1;
+const nextIdx=idx+1;
+if(nextIdx>=total){
+setFinished(true);
+setSelectedId(null);
+if(ctx.mode==='unit'&&ctx.unit&&onUnitComplete){
+const score=Math.round((correctRef.current/total)*100);
+onUnitComplete(ctx.unit.id,score>=80,score);
+}
+}else{
+setIdx(nextIdx);
 setQ(makeQ(nextIdx)); // toujours dérivé du même idx que celui qu'on vient de committer
 setSelectedId(null);
-return nextIdx;
-});
+}
 },1200);
 };
 
+if(isEmpty){
 return React.createElement('div',null,
 React.createElement('div',{style:{padding:'20px 16px 8px'}},
-React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Quiz'),
-React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(idx+1)+' · '+pool.length+' mots au total')
+React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Quiz')
+),
+React.createElement('div',{className:'section'},
+React.createElement('div',{className:'card',style:{padding:28,textAlign:'center'}},
+React.createElement('div',{style:{fontSize:40,marginBottom:10}},'🎉'),
+React.createElement('div',{style:{fontSize:15,fontWeight:600,marginBottom:6}},'Rien à réviser pour le moment'),
+React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginBottom:18}},'Tous les mots de cette sélection sont déjà à jour.'),
+onExitToLibrary&&React.createElement('button',{onClick:onExitToLibrary,style:{background:'var(--accent)',border:'none',borderRadius:12,padding:'12px 20px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'Retour')
+)
+)
+);
+}
+
+if(finished){
+const score=Math.round((correctRef.current/total)*100);
+const passed=score>=80;
+return React.createElement('div',null,
+React.createElement('div',{style:{padding:'20px 16px 8px'}},
+React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},ctx.label)
+),
+React.createElement('div',{className:'section'},
+React.createElement('div',{className:'card',style:{padding:28,textAlign:'center'}},
+React.createElement('div',{style:{fontSize:40,marginBottom:10}},passed?'🏆':'💪'),
+React.createElement('div',{style:{fontSize:22,fontWeight:700,marginBottom:4}},score+'%'),
+React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginBottom:4}},correctRef.current+' / '+total+' bonnes réponses'),
+ctx.mode==='unit'&&React.createElement('div',{style:{fontSize:13,color:passed?'var(--green)':'var(--red)',marginTop:8,marginBottom:10,fontWeight:600}},passed?'Palier validé ✓ (80% requis)':'Palier non validé — 80% requis'),
+React.createElement('div',{style:{display:'flex',gap:10,justifyContent:'center',marginTop:18}},
+React.createElement('button',{onClick:restart,style:{background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:12,padding:'12px 18px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'🔁 Recommencer'),
+onExitToLibrary&&React.createElement('button',{onClick:onExitToLibrary,style:{background:'var(--accent)',border:'none',borderRadius:12,padding:'12px 18px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'Retour')
+)
+)
+)
+);
+}
+
+return React.createElement('div',null,
+React.createElement('div',{style:{padding:'20px 16px 8px'}},
+React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},ctx.label),
+React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(idx+1)+' · '+total+' mot'+(total>1?'s':''))
 ),
 React.createElement('div',{className:'section',style:{marginTop:8}},
 React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
