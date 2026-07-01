@@ -594,249 +594,73 @@ function ImmersionTab({onOpen,activeId,onSetActiveId,onRead}){
 }
 
 // ── QUIZ ──
-function QuizTab({srsData,onSRS,initialMode,initialTextId,initialParcoursId,initialUnitId,onModeConsumed,onUnitComplete,onExitToLibrary}){
-  const[mode,setMode]=useState(initialMode||'menu');
-  const[textId,setTextId]=useState(initialTextId||IMMERSION_TEXTS[0].id);
-  const[parcoursId,setParcoursId]=useState(initialParcoursId||PARCOURS[0].id);
-  const[unitId,setUnitId]=useState(initialUnitId||UNITS[0].id);
-  useEffect(()=>{if(initialMode){setMode(initialMode);if(initialTextId)setTextId(initialTextId);if(initialParcoursId)setParcoursId(initialParcoursId);if(initialUnitId)setUnitId(initialUnitId);onModeConsumed&&onModeConsumed();}},[initialMode]);
+// ── QUIZ (version corrigée) ──
+function QuizTab({srsData,onSRS}){
+const pool=VOCABULARY;
 
-  const pool=useMemo(()=>{
-    if(mode==='text'){const t=IMMERSION_TEXTS.find(x=>x.id===textId);return getTextVocab(t)}
-    if(mode==='parcours'){const p=PARCOURS.find(x=>x.id===parcoursId);return p?getParcoursWords(p):VOCABULARY}
-    if(mode==='unit'){const u=UNITS.find(x=>x.id===unitId);return u?getUnitWords(u):VOCABULARY}
-    if(mode==='due'){const due=VOCABULARY.filter(w=>isDue(srsData[w.id]));return due.length>=4?due:VOCABULARY}
-    return VOCABULARY;
-  },[mode,textId,parcoursId,unitId]);
+// makeQ construit la question ET fige les options (avec un id stable) une seule fois
+const makeQ=i=>{
+const word=pool[i%pool.length];
+const wrong=pool.filter(w=>w.id!==word.id).sort(()=>Math.random()-.5).slice(0,3);
+const opts=[word,...wrong]
+.sort(()=>Math.random()-.5)
+.map(w=>({id:w.id,text:w.definition,isCorrect:w.id===word.id}));
+return{word,options:opts};
+};
 
-  const makeQFor=word=>{
-    const sameCat=VOCABULARY.filter(w=>w.id!==word.id&&w.category===word.category);
-    const wrongPool=sameCat.length>=3?sameCat:VOCABULARY.filter(w=>w.id!==word.id);
-    const wrong=wrongPool.sort(()=>Math.random()-.5).slice(0,3).map(w=>w.definition);
-    const opts=[word.definition,...wrong].sort(()=>Math.random()-.5);
-    return{word,options:opts,correct:word.definition};
-  };
+const[idx,setIdx]=useState(0);
+const[q,setQ]=useState(()=>makeQ(0));
+const[selectedId,setSelectedId]=useState(null);
 
-  // ── MODE PALIER : leçon complète (Découverte → Entraînement mixte → Résultats) ──
-  const[phase,setPhase]=useState('intro'); // 'intro' | 'practice' | 'results'
-  const[introIdx,setIntroIdx]=useState(0);
-  const[session,setSession]=useState([]);
-  const[sessionIdx,setSessionIdx]=useState(0);
-  const[correctCount,setCorrectCount]=useState(0);
-  const[finished,setFinished]=useState(false);
-  const completedRef=useRef(false);
-  const unitWords=useMemo(()=>{const u=UNITS.find(x=>x.id===unitId);return u?getUnitWords(u):[]},[unitId]);
+const handle=opt=>{
+if(selectedId!==null)return; // empêche tout second clic pendant l'affichage du résultat
+setSelectedId(opt.id);
+const c=opt.isCorrect?'known':'unknown';
+const n={...srsData,[q.word.id]:c};
+saveSRS(n);
+onSRS(n);
 
-  const buildLesson=words=>{
-    let exos=words.map(w=>({type:'mcq_def',word:w}));
-    const second=[...words].sort(()=>Math.random()-.5).map(w=>({type:Math.random()<0.5?'mcq_word':'listen',word:w}));
-    exos=exos.concat(second);
-    return exos.sort(()=>Math.random()-.5);
-  };
-  const buildExerciseQ=ex=>{
-    const w=ex.word;
-    const others=unitWords.filter(x=>x.id!==w.id);
-    const pickWrong=key=>others.sort(()=>Math.random()-.5).slice(0,3).map(x=>x[key]);
-    if(ex.type==='mcq_def'){
-      const opts=[w.definition,...pickWrong('definition')].sort(()=>Math.random()-.5);
-      return{kind:'mcq_def',word:w,options:opts,correct:w.definition};
-    }
-    const opts=[w.arabic,...pickWrong('arabic')].sort(()=>Math.random()-.5);
-    return{kind:ex.type,word:w,options:opts,correct:w.arabic};
-  };
+setTimeout(()=>{
+setIdx(prev=>{
+const nextIdx=prev+1;
+setQ(makeQ(nextIdx)); // toujours dérivé du même idx que celui qu'on vient de committer
+setSelectedId(null);
+return nextIdx;
+});
+},1200);
+};
 
-  useEffect(()=>{
-    if(mode==='unit'){
-      setPhase(unitWords.length?'intro':'practice');
-      setIntroIdx(0);setSession([]);setSessionIdx(0);setCorrectCount(0);setFinished(false);completedRef.current=false;
-    }
-  },[mode,unitId]);
-
-  const startPractice=()=>{setSession(buildLesson(unitWords));setSessionIdx(0);setPhase('practice')};
-  const sessionQ=mode==='unit'&&phase==='practice'&&session.length?buildExerciseQ(session[sessionIdx]):null;
-  useEffect(()=>{
-    if(mode==='unit'&&phase==='practice'&&sessionQ&&sessionQ.kind==='listen')speakArabic(sessionQ.word.arabic);
-  },[mode,phase,sessionIdx]);
-
-  // ── MODES LIBRES (infinis) ──
-  const[idx,setIdx]=useState(0);
-  const[selected,setSelected]=useState(null);
-  const pickWord=lastId=>{
-    const candidates=pool.filter(w=>w.id!==lastId);
-    return(candidates.length?candidates:pool)[Math.floor(Math.random()*(candidates.length||pool.length))];
-  };
-  const[q,setQ]=useState(null);
-  useEffect(()=>{if(mode!=='menu'&&mode!=='unit'){setQ(makeQFor(pickWord(null)));setIdx(0);setSelected(null)}},[mode,textId,parcoursId]);
-
-  const handle=opt=>{
-    if(mode==='unit'){
-      if(selected||!sessionQ)return;
-      setSelected(opt);
-      const isCorrect=opt===sessionQ.correct;
-      const quality=isCorrect?2:0;
-      const n=reviewCard(srsData,sessionQ.word.id,quality);saveSRS(n);onSRS(n);
-      if(isCorrect)setCorrectCount(c=>c+1);
-      setTimeout(()=>{
-        setSelected(null);
-        if(sessionIdx+1<session.length){setSessionIdx(i=>i+1)}
-        else{setFinished(true)}
-      },1200);
-      return;
-    }
-    if(selected||!q)return;
-    setSelected(opt);
-    const quality=opt===q.correct?2:0;
-    const n=reviewCard(srsData,q.word.id,quality);saveSRS(n);onSRS(n);
-    setTimeout(()=>{setIdx(p=>p+1);setQ(makeQFor(pickWord(q.word.id)));setSelected(null);},1200);
-  };
-
-  useEffect(()=>{
-    if(mode==='unit'&&finished&&!completedRef.current){
-      completedRef.current=true;
-      const score=session.length?Math.round((correctCount/session.length)*100):0;
-      const passed=score>=80;
-      onUnitComplete&&onUnitComplete(unitId,passed,score);
-    }
-  },[finished]);
-
-  if(mode==='menu')return React.createElement('div',null,
-    React.createElement('div',{style:{padding:'20px 16px 8px'}},
-      React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Quiz'),
-      React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Choisis ton mode')
-    ),
-    React.createElement('div',{className:'section'},
-      React.createElement('div',{className:'card',style:{padding:16,marginBottom:12,cursor:'pointer'},onClick:()=>setMode('general')},
-        React.createElement('div',{style:{fontSize:15,fontWeight:600}},'🎯 Quiz Général'),
-        React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginTop:4}},'Sur les '+VOCABULARY.length+' mots du dictionnaire')
-      ),
-      React.createElement('div',{className:'card',style:{padding:16,marginBottom:12,cursor:'pointer'},onClick:()=>setMode('due')},
-        React.createElement('div',{style:{fontSize:15,fontWeight:600}},'⏳ Mots à réviser'),
-        React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginTop:4}},'Cible les mots arrivés à échéance')
-      ),
-      React.createElement('div',{className:'section-title',style:{marginTop:8}},'Par parcours thématique'),
-      ...PARCOURS.map(p=>React.createElement('div',{key:p.id,className:'card',style:{padding:16,marginBottom:10,cursor:'pointer',display:'flex',alignItems:'center',gap:12},onClick:()=>{setParcoursId(p.id);setMode('parcours')}},
-        React.createElement('div',{style:{fontSize:22}},p.icon),
-        React.createElement('div',null,
-          React.createElement('div',{style:{fontSize:15,fontWeight:600}},p.title),
-          React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginTop:2}},getParcoursWords(p).length+' mots du module')
-        )
-      )),
-      React.createElement('div',{className:'section-title',style:{marginTop:8}},'Quiz ciblé par texte'),
-      ...IMMERSION_TEXTS.map(t=>React.createElement('div',{key:t.id,className:'card',style:{padding:16,marginBottom:10,cursor:'pointer'},onClick:()=>{setTextId(t.id);setMode('text')}},
-        React.createElement('div',{style:{fontSize:15,fontWeight:600}},t.title),
-        React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginTop:4}},getTextVocab(t).length+' mots dans ce texte')
-      ))
-    )
-  );
-
-  // ── PHASE DÉCOUVERTE : flashcards une par une ──
-  if(mode==='unit'&&phase==='intro'){
-    const w=unitWords[introIdx];
-    if(!w)return null;
-    const isLast=introIdx===unitWords.length-1;
-    return React.createElement('div',null,
-      React.createElement('div',{style:{padding:'20px 16px 8px'}},
-        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Découverte'),
-        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Mot '+(introIdx+1)+' / '+unitWords.length)
-      ),
-      React.createElement('div',{style:{display:'flex',gap:6,padding:'0 16px 16px'}},
-        unitWords.map((x,i)=>React.createElement('div',{key:i,style:{flex:1,height:5,borderRadius:3,background:i<introIdx?'var(--green)':i===introIdx?'var(--accent)':'var(--bg5)'}}))
-      ),
-      React.createElement('div',{className:'section',style:{marginTop:0}},
-        React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
-          React.createElement('div',{className:'word-hero-content'},
-            React.createElement('div',{style:{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}},
-              React.createElement('div',{className:'word-badge'},React.createElement('span',{className:'dot-live'}),w.register),
-              React.createElement('button',{onClick:()=>speakArabic(w.arabic),style:{background:'rgba(255,255,255,.08)',border:'1px solid rgba(255,255,255,.15)',borderRadius:'50%',width:38,height:38,fontSize:16,color:'#fff',cursor:'pointer',flexShrink:0}},'🔊')
-            ),
-            React.createElement('div',{className:'arabic-text'},w.arabic),
-            React.createElement('div',{className:'transliteration'},w.transliteration),
-            React.createElement('div',{className:'definition-text'},w.definition),
-            React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:w.level}))
-          )
-        ),
-        React.createElement('button',{onClick:()=>isLast?startPractice():setIntroIdx(i=>i+1),style:{width:'100%',background:'var(--accent)',border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer'}},isLast?'🚀 Commencer l\'entraînement':'Suivant →')
-      )
-    );
-  }
-
-  // ── ÉCRAN DE RÉSULTATS DU PALIER ──
-  if(mode==='unit'&&finished){
-    const u=UNITS.find(x=>x.id===unitId);
-    const score=session.length?Math.round((correctCount/session.length)*100):0;
-    const passed=score>=80;
-    return React.createElement('div',{style:{padding:'40px 24px',textAlign:'center'}},
-      React.createElement('div',{style:{fontSize:54,marginBottom:12}},passed?'🎉':'💪'),
-      React.createElement('div',{style:{fontSize:22,fontWeight:700,marginBottom:6}},passed?'Palier validé !':'Pas encore'),
-      React.createElement('div',{style:{fontSize:14,color:'var(--text3)',marginBottom:24}},correctCount+' / '+session.length+' bonnes réponses ('+score+'%)'),
-      !passed&&React.createElement('div',{style:{fontSize:12,color:'var(--text3)',marginBottom:20,lineHeight:1.5}},'Il te faut au moins 80% pour débloquer l\'unité suivante. Retente !'),
-      React.createElement('button',{onClick:()=>{setFinished(false);completedRef.current=false;startPractice();},style:{width:'100%',background:u.color,border:'none',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:700,cursor:'pointer',marginBottom:10}},'🔁 Refaire l\'entraînement'),
-      React.createElement('button',{onClick:()=>onExitToLibrary&&onExitToLibrary(),style:{width:'100%',background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:14,padding:'14px',color:'#fff',fontSize:14,fontWeight:600,cursor:'pointer'}},'← Retour au parcours')
-    );
-  }
-
-  // ── PHASE ENTRAÎNEMENT : exercices mixtes interleavés ──
-  if(mode==='unit'){
-    if(!sessionQ)return null;
-    const kindLabel={mcq_def:'QUEL EST LE SENS ?',mcq_word:'QUEL MOT CORRESPOND À CETTE DÉFINITION ?',listen:'ÉCOUTE ET CHOISIS LE BON MOT'}[sessionQ.kind];
-    return React.createElement('div',null,
-      React.createElement('div',{style:{padding:'20px 16px 8px'}},
-        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Entraînement'),
-        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Exercice '+(sessionIdx+1)+' / '+session.length)
-      ),
-      React.createElement('div',{style:{display:'flex',gap:6,padding:'0 16px 16px'}},
-        session.map((w,i)=>React.createElement('div',{key:i,style:{flex:1,height:5,borderRadius:3,background:i<sessionIdx?'var(--green)':i===sessionIdx?'var(--accent)':'var(--bg5)'}}))
-      ),
-      React.createElement('div',{className:'section',style:{marginTop:0}},
-        React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
-          React.createElement('div',{className:'word-hero-content'},
-            React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},kindLabel),
-            sessionQ.kind==='mcq_def'&&React.createElement(React.Fragment,null,
-              React.createElement('div',{className:'arabic-text'},sessionQ.word.arabic),
-              React.createElement('div',{className:'transliteration'},sessionQ.word.transliteration)
-            ),
-            sessionQ.kind==='mcq_word'&&React.createElement('div',{style:{fontSize:17,color:'#fff',lineHeight:1.5,marginTop:4}},sessionQ.word.definition),
-            sessionQ.kind==='listen'&&React.createElement('button',{onClick:()=>speakArabic(sessionQ.word.arabic),style:{background:'rgba(255,255,255,.1)',border:'1px solid rgba(255,255,255,.2)',borderRadius:16,padding:'18px 28px',fontSize:30,color:'#fff',cursor:'pointer',marginTop:6}},'🔊'),
-            React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:sessionQ.word.level}))
-          )
-        ),
-        ...sessionQ.options.map((opt,i)=>{
-          let cls='quiz-option';
-          if(selected){if(opt===sessionQ.correct)cls+=' correct';else if(opt===selected)cls+=' wrong';}
-          return React.createElement('div',{key:i,className:cls,style:sessionQ.kind!=='mcq_def'?{direction:'rtl',textAlign:'right',fontSize:17}:null,onClick:()=>handle(opt)},opt);
-        })
-      )
-    );
-  }
-
-  if(!q)return null;
-
-  return React.createElement('div',null,
-    React.createElement('div',{style:{padding:'20px 16px 8px',display:'flex',justifyContent:'space-between',alignItems:'center'}},
-      React.createElement('div',null,
-        React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Quiz'),
-        React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(idx+1)+' · '+pool.length+' mots dans ce mode')
-      ),
-      React.createElement('button',{onClick:()=>setMode('menu'),style:{background:'var(--bg4)',border:'1px solid var(--border)',borderRadius:10,padding:'8px 12px',color:'#fff',fontSize:12,cursor:'pointer'}},'Changer')
-    ),
-    React.createElement('div',{className:'section',style:{marginTop:8}},
-      React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
-        React.createElement('div',{className:'word-hero-content'},
-          React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},'QUEL EST LE SENS ?'),
-          React.createElement('div',{className:'arabic-text'},q.word.arabic),
-          React.createElement('div',{className:'transliteration'},q.word.transliteration),
-          React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:q.word.level}))
-        )
-      ),
-      ...q.options.map((opt,i)=>{
-        let cls='quiz-option';
-        if(selected){if(opt===q.correct)cls+=' correct';else if(opt===selected)cls+=' wrong';}
-        return React.createElement('div',{key:i,className:cls,onClick:()=>handle(opt)},opt);
-      })
-    )
-  );
+return React.createElement('div',null,
+React.createElement('div',{style:{padding:'20px 16px 8px'}},
+React.createElement('div',{style:{fontSize:26,fontWeight:700,letterSpacing:-.5}},'Quiz'),
+React.createElement('div',{style:{fontSize:13,color:'var(--text3)',marginTop:4}},'Question '+(idx+1)+' · '+pool.length+' mots au total')
+),
+React.createElement('div',{className:'section',style:{marginTop:8}},
+React.createElement('div',{className:'word-hero',style:{cursor:'default',marginBottom:20}},
+React.createElement('div',{className:'word-hero-content'},
+React.createElement('div',{style:{fontSize:11,color:'rgba(255,255,255,.4)',textTransform:'uppercase',letterSpacing:1,marginBottom:12}},'QUEL EST LE SENS ?'),
+React.createElement('div',{className:'arabic-text'},q.word.arabic),
+React.createElement('div',{className:'transliteration'},q.word.transliteration),
+React.createElement('div',{style:{marginTop:10}},React.createElement(LevelBadge,{level:q.word.level}))
+)
+),
+// clé stable = id du mot dont provient la définition -> ne bouge jamais tant que q ne change pas
+...q.options.map(opt=>{
+let cls='quiz-option';
+if(selectedId!==null){
+if(opt.isCorrect)cls+=' correct'; // révèle toujours la bonne réponse en vert
+else if(opt.id===selectedId)cls+=' wrong'; // seule celle cliquée (si fausse) passe en rouge
 }
-
+return React.createElement('div',{
+key:opt.id,
+className:cls,
+style:{pointerEvents:selectedId!==null?'none':'auto'},
+onClick:()=>handle(opt)
+},opt.text);
+})
+)
+);
+}
 // ── PROGRESS ──
 function ProgressTab({srsData,stats,onImport,readTexts}){
   const known=Object.values(srsData).filter(v=>v.status==='known').length;
